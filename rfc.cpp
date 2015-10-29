@@ -17,10 +17,6 @@
 
 using namespace std;
 
-
-#define LINE_MAX_LEN 4096
-#define STRING_LEN_MAX 100
-
 Rfc::Rfc()
 {
 	configData = NULL;
@@ -63,7 +59,7 @@ void Rfc::parseConfigFile(string filename)
 					goto rescan;
 				char name[STRING_LEN_MAX];
 				unsigned long mid, pid, default_usid, assigned_usid, device_module_type_instance;
-				sscanf(line, "%s\t%lx\t%lx\t%lx\t%lx\t%d", name, &pid, &mid, &default_usid, &assigned_usid, &device_module_type_instance);
+				sscanf(line, "%s\t%lx\t%lx\t%lx\t%lx\t%ld", name, &pid, &mid, &default_usid, &assigned_usid, &device_module_type_instance);
 				Device dev(name, pid, mid, default_usid, assigned_usid, device_module_type_instance);
 				assert(device_module_type_instance >= 0);
 				devMap.insert(pair<string, Device>(name, dev));
@@ -92,6 +88,7 @@ void Rfc::parseConfigFile(string filename)
 			 *g900    rx0_port  REG value    PortNum  Sec_PortNum  PortNum  REG value    PortNum  REG value    PortNum  -1
 			 *-1      prx_lb2   0x3          ............................
 			 */
+			 Band *band = NULL;
 			while(configReadLine(line) > 0) {
 				istringstream iss_head;
 				iss_head.str(line);
@@ -103,24 +100,27 @@ void Rfc::parseConfigFile(string filename)
 				iss_head>>tmp;
 				iss_val>>tmp_val;
 				string band_name;
-				if(tmp.compare("-1"))
+				if(tmp.compare("-1")) {
 					band_name = tmp;
-				#ifdef DEBUG
-					cout<<"band_name="<<band_name<<endl;
-				#endif
-				Band band(band_name);
-
+					if(band) {
+						bandList.push_back(*band);
+						delete band;
+						band = NULL;
+					}
+					band = new Band(band_name);
+					assert(band);
+				}
 				//check wtr-port
 				iss_head>>tmp;
 				iss_val>>tmp_val;
-				enum rf_path_type path = band.pathType(tmp);
+				enum rf_path_type path = band->pathType(tmp);
 				assert(path != RF_PATH_INVALID);
-				band.setWtrPort(path, tmp_val);
+				band->setWtrPort(path, tmp_val);
 
 				//parse device
 				for(list<string>::iterator it = devInBandCfg.begin(); it != devInBandCfg.end(); ++it) {
 					DeviceCfg dev(*it);
-					if((devMap.find(dev.getName())->second).getType() == RFDEVICE_ASM) {
+					if(dev.getType() == RFDEVICE_ASM) {
 						iss_head>>tmp>>tmp; //reg port
 						iss_val>>tmp_val;
 						if(tmp_val.find_first_of("0123456789") != string::npos)
@@ -133,7 +133,7 @@ void Rfc::parseConfigFile(string filename)
 							dev.setPort(strtol(tmp_val.c_str(), NULL, 10));
 						else
 							dev.setPort(-1);
-					} else if((devMap.find(dev.getName())->second).getType() == RFDEVICE_PA) {
+					} else if(dev.getType() == RFDEVICE_PA) {
 						iss_head>>tmp>>tmp; //sec_port port
 						iss_val>>tmp_val;
 						if(tmp_val.find_first_of("0123456789") != string::npos)
@@ -146,7 +146,7 @@ void Rfc::parseConfigFile(string filename)
 							dev.setPort(strtol(tmp_val.c_str(), NULL, 10));
 						else
 							dev.setPort(-1);
-					} else if((devMap.find(dev.getName())->second).getType() == RFDEVICE_PAPM_TUNER) {
+					} else if(dev.getType() == RFDEVICE_PAPM_TUNER) {
 						iss_head>>tmp>>tmp;
 						iss_val>>tmp_val>>tmp_val;
 					}
@@ -155,7 +155,7 @@ void Rfc::parseConfigFile(string filename)
 						exit(-1);
 					}
 					if(dev.getReg() != -1 || dev.getSecPort() != -1 || dev.getPort() != -1)
-						 band.addDeviceCfg(path, dev);
+						 band->addDeviceCfg(path, dev);
 				}
 
 				//parse gpio
@@ -174,13 +174,18 @@ void Rfc::parseConfigFile(string filename)
 							iss_gpio>>value[i];
 						}
 						GpioCfg gpio(value[0], value[1]);
-						band.addGpioCfg(path, gpio);
+						band->addGpioCfg(path, gpio);
 					}
 				}
-				bandList.push_back(band);
+			}
+			if(band) {
+				bandList.push_back(*band);
+				delete band;
+				band = NULL;
 			}
 		}
 	}
+	delete[] line;
 }
 
 void Rfc::readConfigFileData(string filename)
@@ -203,10 +208,10 @@ void Rfc::readConfigFileData(string filename)
 	 * begining with 0xFFFE means unicode text file
 	 */
 	int unicode = 0;
-	if(configData[0] == 0xFF && configData[1] == 0xFE) {
+	if(static_cast<unsigned char>(configData[0]) == 0xFF && static_cast<unsigned char>(configData[1]) == 0xFE) {
 		unicode = 1;
 	}
-	else if(tolower(static_cast<unsigned char>(configData[0])) == 'g' && tolower(static_cast<unsigned char>(configData[1])) =='p') {
+	else if(tolower(static_cast<unsigned char>(configData[0])) != 'g' || tolower(static_cast<unsigned char>(configData[1])) !='p') {
 		cerr<<"ERROR: config file format is wrong, please save excel file as text, and gpio must be the first configuration."<<endl;
 		exit(-1);
 	}
@@ -282,10 +287,11 @@ void Rfc::codeGenerate(string infilename, string outfilename)
 	assert(in.is_open());
 	
 	ostringstream out;
-	string outData = out.str();
 	char *line = new char[LINE_MAX_LEN];
 	assert(line);
 	while (in.getline(line, LINE_MAX_LEN)) {
+		line[strlen(line) + 1] = '\0';
+		line[strlen(line)] = '\n';
 		if(isMatchSigCfg(line)) {
 			char rf_path[STRING_LEN_MAX];
 			getMatchSigCfg(line, rf_path);
@@ -306,16 +312,18 @@ void Rfc::codeGenerate(string infilename, string outfilename)
 	delete[] line;
 	ofstream fout(outfilename.c_str());
 	assert(fout.is_open());
-	fout<<outData;
+	fout<<out.str();
 }
 
 void Rfc::dumpConfig(void)
 {
 	cout.setf(ios::left);
+	//gpio name
 	cout<<setw(6)<<"gpio"<<"name"<<endl;
 	for(map<int, string>::iterator it = gpioMap.begin(); it != gpioMap.end(); ++it)
 		cout<<setw(6)<<it->first<<it->second<<endl;
 
+	//device pid mid .....
 	cout<<setw(15)<<"DEVICE"<<setw(10)<<"PID"<<setw(10)<<"MID"<<setw(15)<<"DEFAULT_USID"<<setw(15)<<"ASSIGNED_USID"<<"DEVICE_MODULE_TYPE_INSTANCE"<<endl;
 	for(map<string, Device>::iterator it = devMap.begin(); it != devMap.end(); ++it) {
 		Device *dev = &it->second;
@@ -323,6 +331,7 @@ void Rfc::dumpConfig(void)
 		cout<<"0x"<<setw(13)<<hex<<dev->getAssignedUsid()<<dev->getModuleInstance()<<endl;
 	}
 
+	//band ...
 	cout<<setw(8)<<"Band"<<setw(10)<<"WTR-Port";
 	for(map<string, Device>::iterator it = devMap.begin(); it != devMap.end(); ++it) {
 		Device *dev = &it->second;
@@ -377,9 +386,9 @@ void Rfc::dumpConfig(void)
 					else
 						cout<<setw(13)<<" ";
 					if(devCfg_found && devCfg_it->getPort() != -1)
-						cout<<setw(13)<<devCfg_it->getPort();
+						cout<<setw(9)<<devCfg_it->getPort();
 					else
-						cout<<setw(13)<<" ";
+						cout<<setw(9)<<" ";
 				}
 				else {
 					if(devCfg_found && devCfg_it->getReg() != -1)
@@ -387,9 +396,9 @@ void Rfc::dumpConfig(void)
 					else
 						cout<<setw(13)<<" ";
 					if(devCfg_found && devCfg_it->getPort() != -1)
-						cout<<setw(13)<<devCfg_it->getPort();
+						cout<<setw(9)<<devCfg_it->getPort();
 					else
-						cout<<setw(13)<<" ";
+						cout<<setw(9)<<" ";
 				}
 			}
 			//print gpio
@@ -414,7 +423,9 @@ list<GpioCfg> Rfc::getSigInfo(char *path)
 			break;
 	}
 
-	assert(it != bandList.end());
+	if(it == bandList.end())
+		return list<GpioCfg>();
+
 
 	if(strstr(path, "rx0"))
 		return it->getGpioCfg(RF_PATH_RX0);
@@ -443,7 +454,9 @@ void Rfc::parseSigCfg(ifstream &in, ostringstream &out, char *path)
 	 *  };
 	 */
 	int num = 0;
-	while(in.getline(line, LINE_MAX_LEN)) {
+	while(num <3 && in.getline(line, LINE_MAX_LEN)) {
+		line[strlen(line) + 1] = '\0';
+		line[strlen(line)] = '\n';
 		out<<line;
 		num++;
 	}
@@ -451,27 +464,30 @@ void Rfc::parseSigCfg(ifstream &in, ostringstream &out, char *path)
 		
 	//get gpio setting
 	while (in.getline(line, LINE_MAX_LEN)) {
-		char pattern_gpio[] = "RF_PATH_SEL_[0-9]*";
-		char pattern_list_end[] = "RFC_SIG_LIST_END";
-		if(isMatch(line, pattern_gpio)) {
+		line[strlen(line) + 1] = '\0';
+		line[strlen(line)] = '\n';
+		if(isMatch(line, "RF_PATH_SEL_[0-9]*")) {
 			;
-		} else if(isMatch(line, pattern_list_end)) {
+		} else if(isMatch(line, "RFC_SIG_LIST_END")) {
 			list<GpioCfg> info = getSigInfo(path);
 			while(info.size()) {
 				if(info.front().getLevel())
-					out<<"    { (int)"<<gpioMap.find(info.front().getNum())->second<<",   { RFC_LOW, 0 }, {RFC_LOW, 0 }  },\n";
-				else
 					out<<"    { (int)"<<gpioMap.find(info.front().getNum())->second<<",   { RFC_HIGH, 0 }, {RFC_LOW, 0 }  },\n";
+				else
+					out<<"    { (int)"<<gpioMap.find(info.front().getNum())->second<<",   { RFC_LOW, 0 }, {RFC_LOW, 0 }  },\n";
 				info.pop_front();
 			}
 			out<<line;
+			break;
 
 		} else
 			out<<line;
 	}
 	
 	num = 0;
-	while(in.getline(line, LINE_MAX_LEN)) {
+	while(num < 2 && in.getline(line, LINE_MAX_LEN)) {
+		line[strlen(line) + 1] = '\0';
+		line[strlen(line)] = '\n';
 		out<<line;
 		num++;
 	}
@@ -486,7 +502,8 @@ list<DeviceCfg> Rfc::getDevInfo(char *path)
 			break;
 	}
 
-	assert(it != bandList.end());
+	if(it == bandList.end())
+		return list<DeviceCfg>();
 
 	if(strstr(path, "rx0"))
 		return it->getDeviceCfg(RF_PATH_RX0);
@@ -508,7 +525,8 @@ string Rfc::getWtrPort(char *path)
 			break;
 	}
 
-	assert(it != bandList.end());
+	if(it == bandList.end())
+		return string();
 
 	if(strstr(path, "rx0"))
 		return it->getWtrPort(RF_PATH_RX0);
@@ -524,17 +542,6 @@ string Rfc::getWtrPort(char *path)
 
 void Rfc::parseDevCfg(ifstream &in, ostringstream &out, char *path)
 {
-	int is_band_configed = 0;
-	for(list<Band>::iterator it = bandList.begin(); it != bandList.end(); ++it) {
-		if(it->isCompatible(path)) {
-			is_band_configed = 1;
-			break;
-		}
-	}
-
-	if(is_band_configed == 0) //this band is not conifed, so don't change any code
-		return;
-
 	char *line = new char[LINE_MAX_LEN];
 	assert(line);
 
@@ -549,11 +556,15 @@ void Rfc::parseDevCfg(ifstream &in, ostringstream &out, char *path)
 
 	int num = 0;
 	while(in.getline(line, LINE_MAX_LEN)) {
+		line[strlen(line) + 1] = '\0';
+		line[strlen(line)] = '\n';
 		if(strstr(line, "NUM_DEVICES_TO_CONFIGURE"))
 			break;
 		out<<line;
 	}
 	in.getline(line, LINE_MAX_LEN);
+	line[strlen(line) + 1] = '\0';
+	line[strlen(line)] = '\n';
 	if(strstr(line, "{")) {
 		;
 	} else {
@@ -569,6 +580,8 @@ void Rfc::parseDevCfg(ifstream &in, ostringstream &out, char *path)
 		string s = "";
 		int in_dev_input = 0;
 		while(in.getline(line, LINE_MAX_LEN)) {
+			line[strlen(line) + 1] = '\0';
+			line[strlen(line)] = '\n';
 			if(in_dev_input == 0 && strstr(line, "}"))
 				goto read_init_devices_end;
 			char *pch = line;
@@ -588,7 +601,10 @@ void Rfc::parseDevCfg(ifstream &in, ostringstream &out, char *path)
 	read_init_devices_end:
 
 	in.getline(line, LINE_MAX_LEN);
+	line[strlen(line) + 1] = '\0';
+	line[strlen(line)] = '\n';
 	assert(strstr(line, "};"));
+
 
 	list<DeviceCfg> info = getDevInfo(path);
 	
@@ -601,29 +617,139 @@ void Rfc::parseDevCfg(ifstream &in, ostringstream &out, char *path)
 	while(pos) {
 		if(!isdigit(static_cast<unsigned char>(wtrcode[pos])))
 			pos--;
+		else
+			break;
 	}
 	assert(pos > 0);
+
 	string wtrport = getWtrPort(path);
-	int wtrport_num_pos = wtrport.find_first_of("123456789");
+	//if this path is not configed, only wtr is left in dev cfg
+	if(wtrport.length() == 0) {
+		out<<"  1,  /* NUM_DEVICES_TO_CONFIGURE */\n  {\n";
+		out<<wtrcode;
+		out<<"    #if 0\n";
+		while(devicesCode.size()) {
+			out<<devicesCode.front();
+			devicesCode.pop_front();
+		}
+		out<<"    #endif\n";
+		out<<"  },\n};\n";
+		delete[] line;
+		return;
+	}
+	int wtrport_num_pos = wtrport.find_first_of("0123456789");
 	assert(wtrport_num_pos != string::npos);
 	wtrcode[pos] = wtrport[wtrport_num_pos];
 
-	string outbuf;
-	ostringstream buf_iss(outbuf.c_str());
+	ostringstream buf_iss;
 
 	buf_iss<<wtrcode;
 	num_devices_to_configure++;
 
 	//check configed device
+	#ifdef MIPI_DEVICE_COMPATIBLE
+	list<DeviceCfg>::iterator devCfg_it;
+	buf_iss.setf(ios::uppercase);
+	buf_iss.fill('0');
+	//check asm ps
+	list<DeviceCfg> asmcfglist;
+	list<DeviceCfg> pacfglist;
+	for(devCfg_it = info.begin(); devCfg_it != info.end(); devCfg_it++) {
+		Device &dev = devMap.find(devCfg_it->getName())->second;
+		if(dev.getType() == RFDEVICE_ASM)
+			asmcfglist.push_back(*devCfg_it);
+		else if(dev.getType() == RFDEVICE_PA)
+			pacfglist.push_back(*devCfg_it);
+	}
+	while(asmcfglist.size()) {
+		int com_dev_count = 0;
+		DeviceCfg devcfg = asmcfglist.front();
+		asmcfglist.pop_front();
+		Device &dev = devMap.find(devcfg.getName())->second;
+		int instance = devMap.find(devcfg.getName())->second.getModuleInstance();
+		num_devices_to_configure++;
+		com_dev_count++;
+		buf_iss<<"    {\n      RFDEVICE_ASM,\n      GEN_ASM,  /* NAME */\n";
+		buf_iss<<"      "<<instance<<",  /* DEVICE_MODULE_TYPE_INSTANCE */\n      0 /*Warning: Not specified*/,  /* PHY_PATH_NUM */\n";
+		buf_iss<<"      {\n        0  /* Orig setting:  */,  /* INTF_REV */\n";
+		buf_iss<<"        (0x"<<hex<<setw(4)<<dev.getMid()<<" << 22)/*mfg_id*/ | (0x"<<hex<<dev.getPid()<<" << 14)/*prd_id*/ | ("<<dec<<devcfg.getPort()<<")/*port_num*/,  /* PORT_NUM */\n";
+		int found = 1;
+		while(found && asmcfglist.size()) {
+			found = 0;
+			for(list<DeviceCfg>::iterator it = asmcfglist.begin(); it != asmcfglist.end(); ++it) {
+				dev = devMap.find(it->getName())->second;
+				if(dev.getModuleInstance() == instance) {
+					devcfg = *it;;
+					asmcfglist.erase(it);
+					com_dev_count++;
+					found = 1;
+					buf_iss<<"        (0x"<<hex<<setw(4)<<dev.getMid()<<" << 22)/*mfg_id*/ | (0x"<<hex<<dev.getPid()<<" << 14)/*prd_id*/ | ("<<dec<<devcfg.getPort()<<")/*port_num*/,  /* PORT_NUM */\n";
+					break;
+				}
+			}
+		}
+		assert(com_dev_count<=5);
+		while(com_dev_count < 5) {
+			buf_iss<<"        0,  /* Array Filler */\n";
+			com_dev_count++;
+		}
+		buf_iss<<"      },\n    },\n";
+
+	}
+	while(pacfglist.size()) {
+		int com_dev_count = 0;
+		DeviceCfg devcfg = pacfglist.front();
+		pacfglist.pop_front();
+		Device &dev = devMap.find(devcfg.getName())->second;
+		int instance = devMap.find(devcfg.getName())->second.getModuleInstance();
+		num_devices_to_configure++;
+		com_dev_count++;
+		buf_iss<<"    {\n      RFDEVICE_PA,\n      GEN_PA,  /* NAME */\n";
+		buf_iss<<"      "<<instance<<",  /* DEVICE_MODULE_TYPE_INSTANCE */\n      0 /*Warning: Not specified*/,  /* PHY_PATH_NUM */\n";
+		buf_iss<<"      {\n        0  /* Orig setting:  */,  /* INTF_REV */\n";
+		if(devcfg.getSecPort() == -1)
+			buf_iss<<"        (0x"<<hex<<setw(4)<<dev.getMid()<<" << 22)/*mfg_id*/ | (0x"<<hex<<dev.getPid()<<" << 14)/*prd_id*/ | ("<<dec<<devcfg.getPort()<<")/*port_num*/,  /* PORT_NUM */\n";
+		else
+			buf_iss<<"        (0x"<<hex<<setw(4)<<dev.getMid()<<" << 22)/*mfg_id*/ | (0x"<<hex<<dev.getPid()<<" << 14)/*prd_id*/ | ("<<dec<<devcfg.getSecPort()<<" << 7)/*sec_port_num*/ | ("<<devcfg.getPort()<<")/*port_num*/,  /* PORT_NUM */\n";
+		int found = 1;
+		while(found && pacfglist.size()) {
+			found = 0;
+			for(list<DeviceCfg>::iterator it = pacfglist.begin(); it != pacfglist.end(); ++it) {
+				dev = devMap.find(it->getName())->second;
+				if(dev.getModuleInstance() == instance) {
+					devcfg =	*it;;
+					pacfglist.erase(it);
+					com_dev_count++;
+					found = 1;
+					if(devcfg.getSecPort() == -1)
+						buf_iss<<"        (0x"<<hex<<setw(4)<<dev.getMid()<<" << 22)/*mfg_id*/ | (0x"<<hex<<dev.getPid()<<" << 14)/*prd_id*/ | ("<<dec<<devcfg.getPort()<<")/*port_num*/,  /* PORT_NUM */\n";
+					else
+						buf_iss<<"        (0x"<<hex<<setw(4)<<dev.getMid()<<" << 22)/*mfg_id*/ | (0x"<<hex<<dev.getPid()<<" << 14)/*prd_id*/ | ("<<dec<<devcfg.getSecPort()<<" << 7)/*sec_port_num*/ | ("<<devcfg.getPort()<<")/*port_num*/,  /* PORT_NUM */\n";
+					break;
+				}
+			}
+		}
+		assert(com_dev_count<=5);
+		while(com_dev_count < 5) {
+			buf_iss<<"        0,  /* Array Filler */\n";
+			com_dev_count++;
+		}
+		buf_iss<<"      },\n    },\n";
+
+	}
+
+	#else
 	list<DeviceCfg>::iterator devCfg_it;
 	for(devCfg_it = info.begin(); devCfg_it != info.end(); devCfg_it++) {
 		Device &dev = devMap.find(devCfg_it->getName())->second;
+		buf_iss.setf(ios::uppercase);
+		buf_iss.fill('0');
 		if(dev.getType() == RFDEVICE_ASM) {
 			num_devices_to_configure++;
 			buf_iss<<"    {\n      RFDEVICE_ASM,\n      GEN_ASM,  /* NAME */\n";
 			buf_iss<<"      "<<dev.getModuleInstance()<<",  /* DEVICE_MODULE_TYPE_INSTANCE */\n      0 /*Warning: Not specified*/,  /* PHY_PATH_NUM */\n";
 			buf_iss<<"      {\n        0  /* Orig setting:  */,  /* INTF_REV */\n";
-			buf_iss<<"        (0x"<<hex<<dev.getMid()<<" << 22)/*mfg_id*/ | (0x"<<hex<<dev.getPid()<<" << 14)/*prd_id*/ | ("<<dec<<devCfg_it->getPort()<<")/*port_num*/,  /* PORT_NUM */\n";
+			buf_iss<<"        (0x"<<hex<<setw(4)<<dev.getMid()<<" << 22)/*mfg_id*/ | (0x"<<hex<<dev.getPid()<<" << 14)/*prd_id*/ | ("<<dec<<devCfg_it->getPort()<<")/*port_num*/,  /* PORT_NUM */\n";
 			buf_iss<<"        0,  /* Array Filler */\n        0,  /* Array Filler */\n        0,  /* Array Filler */\n        0,  /* Array Filler */\n";
 			buf_iss<<"      },\n    },\n";
 		} else if(dev.getType() == RFDEVICE_PA) {
@@ -632,15 +758,15 @@ void Rfc::parseDevCfg(ifstream &in, ostringstream &out, char *path)
 			buf_iss<<"      "<<dev.getModuleInstance()<<",  /* DEVICE_MODULE_TYPE_INSTANCE */\n      0 /*Warning: Not specified*/,  /* PHY_PATH_NUM */\n";
 			buf_iss<<"      {\n        0  /* Orig setting:  */,  /* INTF_REV */\n";
 			if(devCfg_it->getSecPort() == -1)
-				buf_iss<<"        (0x"<<hex<<dev.getMid()<<" << 22)/*mfg_id*/ | (0x"<<hex<<dev.getPid()<<" << 14)/*prd_id*/ | ("<<devCfg_it->getPort()<<")/*port_num*/,  /* PORT_NUM */\n";
+				buf_iss<<"        (0x"<<hex<<setw(4)<<dev.getMid()<<" << 22)/*mfg_id*/ | (0x"<<hex<<dev.getPid()<<" << 14)/*prd_id*/ | ("<<dec<<devCfg_it->getPort()<<")/*port_num*/,  /* PORT_NUM */\n";
 			else
-				buf_iss<<"        (0x"<<hex<<dev.getMid()<<" << 22)/*mfg_id*/ | (0x"<<hex<<dev.getPid()<<" << 14)/*prd_id*/ | ("<<dec<<devCfg_it->getSecPort()<<" << 7)/*sec_port_num*/ | ("<<devCfg_it->getPort()<<")/*port_num*/,  /* PORT_NUM */";
+				buf_iss<<"        (0x"<<hex<<setw(4)<<dev.getMid()<<" << 22)/*mfg_id*/ | (0x"<<hex<<dev.getPid()<<" << 14)/*prd_id*/ | ("<<dec<<devCfg_it->getSecPort()<<" << 7)/*sec_port_num*/ | ("<<devCfg_it->getPort()<<")/*port_num*/,  /* PORT_NUM */\n";
 				
 			buf_iss<<"        0,  /* Array Filler */\n        0,  /* Array Filler */\n        0,  /* Array Filler */\n        0,  /* Array Filler */\n";
 			buf_iss<<"      },\n    },\n";
 		}
-		
 	}
+	#endif
 
 
 	//check hdet qfe(PAPM TUNER)
@@ -650,20 +776,33 @@ void Rfc::parseDevCfg(ifstream &in, ostringstream &out, char *path)
 			buf_iss<<*devCode_it;
 		}
 		else if(devCode_it->find("RFDEVICE_PAPM") != string::npos || devCode_it->find("RFDEVICE_TUNER") != string::npos) {
+
 				char devname[STRING_LEN_MAX] = {0,};
-				if(devCfg_it->getName().find("QFE[0-9]+") != string::npos) {
-					getMatch(devCfg_it->getName().c_str(), "QFE[0-9]+", devname);
+				if(isMatch(devCode_it->c_str(), "QFE[0-9]+")) {
+					getMatch(devCode_it->c_str(), "QFE[0-9]+", devname);
 					unsigned char *pch = (unsigned char *)devname;
 					while(*pch) {
 						*pch = tolower(*pch);
 						pch++;
 					}
 				}
+				int dev_found_in_devmap = 0;
 				for(map<string, Device>::iterator map_it = devMap.begin(); map_it != devMap.end(); ++map_it) {
 					if(map_it->first.find(devname) != string::npos) {
 						num_devices_to_configure++;
 						buf_iss<<*devCode_it;
+						dev_found_in_devmap = 1;
 						break;
+					}
+				}
+				if(dev_found_in_devmap == 0) {
+					for(list<string>::iterator it = devInBandCfg.begin(); it != devInBandCfg.end(); ++it) {
+						if(it->compare(devname) == 0)
+						{
+							num_devices_to_configure++;
+							buf_iss<<*devCode_it;
+							dev_found_in_devmap = 1;
+						}
 					}
 				}
 			}
@@ -672,7 +811,7 @@ void Rfc::parseDevCfg(ifstream &in, ostringstream &out, char *path)
 
 	//print device
 	out<<"  "<<num_devices_to_configure<<",  /* NUM_DEVICES_TO_CONFIGURE */\n  {\n";
-	out<<outbuf;
+	out<<buf_iss.str();
 	out<<"  },\n};\n";
 	delete[] line;
 }

@@ -4,9 +4,12 @@
 #include <list>
 #include <cassert>
 #include <cstdlib>
+#include <cstdio>
 #include "band.h"
 
 using namespace std;
+
+#define STRING_LEN_MAX 100
 
 Band::Band(string name)
 {
@@ -31,30 +34,37 @@ bool Band::isCompatible(string pathCfgName)
 	else if(mName.find_first_of("cC") != string::npos) //cdma
 		tmp = "cdma_bc";
 
-	int num_pos = mName.find_first_of("123456789");
+	int num_pos = mName.find_first_of("0123456789");
 	assert(num_pos != string::npos);
 
 	int band = strtol(mName.substr(num_pos).c_str(), NULL, 10);
-	tmp += band;
+	char band_n[STRING_LEN_MAX];
+	sprintf(band_n, "%d", band);
+	tmp += band_n;
 
 	//check split band name
 	int split_pos = mName.find_first_not_of("0123456789",num_pos);
-	switch(mName[split_pos]) {
-		case 'b':
-		case 'B':
-		case 'c':
-		case 'C':
-			tmp += "_";
-			tmp += tolower(mName[split_pos]);
-			if(pathCfgName.find(tmp) != string::npos)
-				return true;
-			break;
-		default:
-			if(pathCfgName.find(tmp) != string::npos) {
-				if(pathCfgName.find(tmp + "_b") == string::npos && pathCfgName.find(tmp + "_c") == string::npos)
+	if(split_pos == string::npos) {
+		if(pathCfgName.find(tmp) != string::npos)
+			return true;
+	} else {
+		switch(mName[split_pos]) {
+			case 'b':
+			case 'B':
+			case 'c':
+			case 'C':
+				tmp += "_";
+				tmp += tolower(mName[split_pos]);
+				if(pathCfgName.find(tmp) != string::npos)
 					return true;
-			}
-			break;
+				break;
+			default:
+				if(pathCfgName.find(tmp) != string::npos) {
+					if(pathCfgName.find(tmp + "_b") == string::npos && pathCfgName.find(tmp + "_c") == string::npos)
+						return true;
+				}
+				break;
+		}
 	}
 	return false;
 }
@@ -80,6 +90,7 @@ void Band::setWtrPort(int path, string port)
 string Band::getWtrPort(int path)
 {
 	assert(path < RF_PATH_INVALID);
+
 	return wtr_port[path];
 }
 

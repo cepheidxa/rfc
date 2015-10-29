@@ -1,0 +1,4 @@
+2015-10-29
+	* add for asm pa compatibility code
+	* checked memory leak with valgrind
+	* change version to V0.2

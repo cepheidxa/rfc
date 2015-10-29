@@ -8,6 +8,11 @@
 
 using namespace std;
 
+#define MIPI_DEVICE_COMPATIBLE
+
+#define LINE_MAX_LEN 4096
+#define STRING_LEN_MAX 100
+
 enum config_type {
 	CONFIG_GPIO,
 	CONFIG_DEVICE,
