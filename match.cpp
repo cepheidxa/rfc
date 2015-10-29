@@ -48,11 +48,9 @@ void getMatch(const char *line, const char *reg, char *match)
 
 int isMatchSigCfg(const char *line)
 {
-	char pattern[] = "rfc_sig_info_type rf_card_.*_[rt]x[01]_[gsmwcdalte]+_[bgc]+[0-9]*_*[abc]*_sig_cfg";
-	int ret = isMatch(line, pattern);
+	int ret = isMatch(line, "rfc_sig_info_type rf_card_.*_[rt]x[01]_[gsmwcdalte]+_[bgc]+[0-9]*_*[abc]*_sig_cfg");
 	if(ret) {
-		char exclude_pattern[] = "init";
-		if(isMatch(line, exclude_pattern))
+		if(isMatch(line, "init"))
 			ret = 0;
 	}
 	return ret;
@@ -60,20 +58,17 @@ int isMatchSigCfg(const char *line)
 
 void getMatchSigCfg(const char *line, char *match)
 {
-	char pattern[] = "rf_card_.*_[rt]x[01]_[gsmwcdalte]+_[bgc]+[0-9]*_*[abc]*_sig_cfg";
-	getMatch(line, pattern, match);
+	getMatch(line, "rf_card_.*_[rt]x[01]_[gsmwcdalte]+_[bgc]+[0-9]*_*[abc]*_sig_cfg", match);
 }
 
 void getMatchDevInfo(const char *line, char *match)
 {
-	char pattern[] = "rf_card_.*_[rt]x[01]_[gsmwcdalte]+_[bgc]+[0-9]*_*[abc]*_device_info";
-	getMatch(line, pattern, match);
+	getMatch(line, "rf_card_.*_[rt]x[01]_[gsmwcdalte]+_[bgc]+[0-9]*_*[abc]*_device_info", match);
 }
 
 int isMatchDevInfo(const char *line)
 {
-	char pattern[] = "rfc_device_info_type rf_card_.*_[rt]x[01]_[gsmwcdalte]+_[bgc]+[0-9]*_*[abc]*_device_info";
-	int ret = isMatch(line, pattern);
+	int ret = isMatch(line, "rfc_device_info_type rf_card_.*_[rt]x[01]_[gsmwcdalte]+_[bgc]+[0-9]*_*[abc]*_device_info");
 	if(ret) {
 		char exclude_pattern[] = "init";
 		if(isMatch(line, exclude_pattern))
