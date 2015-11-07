@@ -1,3 +1,5 @@
+2015-11-07
+	* add automake files
 2015-10-29
 	* add for asm pa compatibility code
 	* checked memory leak with valgrind

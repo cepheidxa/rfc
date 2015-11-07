@@ -9,6 +9,7 @@ extern "C" {
 }
 #endif
 #include "rfc.h"
+#include "config.h"
 
 using namespace std;
 
@@ -16,12 +17,12 @@ using namespace std;
  * Usage: main qualcomm_file_name  generated_file_name
  * */
 
-#define VERSION "V0.2"
 
 
 static void usage(void)
 {
 	cerr<<"Usage: main qualcomm_file_name generated_file_name"<<endl;
+	cerr<<"Please report any bugs to "<<PACKAGE_BUGREPORT<<endl;
 	exit(-1);
 }
 
